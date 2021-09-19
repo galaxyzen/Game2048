@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Game2048</title>
+
+  <style>
+    * {
+      box-sizing: 0;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      height: 100%;
+      font-family: 'clear sans', 'helvetica neue' , Arial, sans-serif;
+      font-weight: 700;
+    }
+
+    body {
+      min-height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-flow: row wrap;
+
+      margin-bottom: 20px;
+    }
+
+    #heading button {
+      flex: 0 1 120px;
+      height: 40px;
+      border: none;
+      border-radius: 3px;
+      outline: none;
+      cursor: pointer;
+      background-color: #8f7a66;
+      color: #f9f6f2;
+      font-size: 17px;
+      font-weight: 700;
+      color: #f9f6f2;
+    }
+
+    #heading #score_container {
+      flex: 0 1 260px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-flow: row wrap;
+    }
+
+    #heading #score_container .score {
+      flex: 0 1 120px;
+      height: 40px;
+      background-color: #bbada0;
+      border-radius: 3px;
+      text-align: center;
+      line-height: 40px;
+      font-size: 17px;
+      cursor: default;
+      color: #f9f6f2;
+    }
+
+    #score_container #current {
+      margin-right: 20px;
+    }
+
+    #box-container {
+      background-color: #bbada0;
+      border-radius: 6px;
+    }
+
+    .box {
+      position: absolute;
+      border-radius: 3px;
+    }
+
+    .num-box {
+      text-align: center;
+    }
+
+    @keyframes ripple {
+      0% {
+        transform: scale(1);
+      }
+
+      50% {
+        transform: scale(1.2);
+      }
+
+      100% {
+        transform: scale(1);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="game-container"></div>
+
+  <script>
+    function Box(config) {
+      this.value = config.value;
+      this.merged = false;
+      this.element = document.createElement('div');
+      this.element.classList.add('box');
+      this.element.style.width = `${config.box_size}px`;
+      this.element.style.height = `${config.box_size}px`;
+      this.element.style.left = `${config.left}px`;
+      this.element.style.top = `${config.top}px`;
+      this.element.style.backgroundColor = config.bgcolor;
+
+      if (config.value !== 0) {
+        this.element.classList.add('num-box');
+        this.element.innerHTML = config.value;
+        this.element.style.lineHeight = this.element.style.height;
+        this.element.style.fontSize = `${config.font_size}px`;
+        this.element.style.color = config.color;
+        this.element.style.transition = `all ${config.slide_time / 1000}s ease-in-out`;
+      }
+    }
+    Box.prototype = {
+      moveTo: function(left, top) {
+        this.element.style.left = `${left}px`;
+        this.element.style.top = `${top}px`;
+      },
+    }
+
+    function Game2048(config, mount_node) {
+      this.size = config.size;
+      this.scale = config.scale;
+      this.mount_node = mount_node;
+      this.box_gap_ratio = 8;
+      this.box_size = config.box_size || this.size / (this.scale + (this.scale + 1) / this.box_gap_ratio);
+      this.gap_size = config.gap_size || this.box_size / this.box_gap_ratio;
+      this.bgc_map = {
+        0: "#eee4da59",
+        2: "#eee4da",
+        4: "#ede0c8",
+        8: "#f2b179",
+        16: "#f59563",
+        32: "#f67c5f",
+        64: "#f65e3b",
+        128: "#edcf72",
+        256: "#edcc61",
+        512: "#edc850",
+        1024: "#edc53f",
+        2048: "#edc22e",
+      };
+      this.font_size_map = {
+        1: 2,
+        2: 2,
+        3: 2.5,
+        4: 3,
+      }
+      this.slide_time = 150;
+      this.scale_time = 100;
+      this.done = true;
+      this.timeouts = [];
+
+      this.initGameLayout();
+    }
+    Game2048.prototype = {
+      // initialize the game layout
+      initGameLayout: function() {
+        // the heading
+        let heading = document.createElement('div');
+        heading.setAttribute('id', 'heading');
+        heading.style.width = `${this.size}px`;
+        // start button
+        let start_btn = document.createElement('button');
+        start_btn.innerHTML = 'New Game';
+        start_btn.addEventListener('click', this.initGame.bind(this))
+        heading.appendChild(start_btn);
+        // socore and best
+        let score_container = document.createElement('div');
+        score_container.setAttribute('id', 'score_container');
+        let score_html = (
+          `<div class="score" id="current">
+            <p>
+              Score:&nbsp;<span>0</span>
+            </p>
+          </div>`
+        );
+        let best_html = (
+          `<div class="score" id="best">
+            <p>
+              Best:&nbsp;<span>0</span>
+            </p>
+          </div>`
+        );
+        score_container.innerHTML = score_html + best_html
+        heading.appendChild(score_container);
+        this.mount_node.appendChild(heading);
+
+
+        this.box_container = document.createElement('div');
+        this.box_container.setAttribute('id', 'box-container');
+        this.box_container.style.width = `${this.size}px`;
+        this.box_container.style.height = `${this.size}px`;
+        this.box_container.style.position = 'relative';
+
+        for (let row = 0; row < this.scale; row++) {
+          for (let col = 0; col < this.scale; col++) {
+            this.box_container.appendChild(this.createNumBox(row, col, 0).element);
+          }
+        }
+
+        this.mount_node.appendChild(this.box_container);
+
+        this.initGame();
+      },
+
+      initGame: function() {
+        this.done = true;
+        for (let i = 0; i < this.timeouts.length; i++) {
+          clearTimeout(this.timeouts[i]);
+        }
+        this.timeouts = [];
+        this.score = 0;
+        this.table = [];
+        for (let i = 0; i < this.scale; i++) {
+          let row = [];
+          for (let j = 0; j < this.scale; j++) {
+            row.push(null);
+          }
+          this.table.push(row);
+        }
+
+        this.randomNum();
+        this.randomNum();
+        this.refresh();
+
+        window.addEventListener('keyup', function(evt) {
+          if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].indexOf(evt.key) === -1 || !this.done) {
+            return;
+          }
+
+          this.done = false;
+          this.respond(evt);
+        }.bind(this));
+      },
+
+      respond: function(evt) {
+        let can_move = false;
+        let base = [];
+        let offset = 0;
+
+        switch (evt.key) {
+          case 'ArrowDown': {
+            for (let i = 0; i < this.scale; i++) {
+              base.push((this.scale - 1) * this.scale + i);
+            }
+            offset = -this.scale;
+            break;
+          }
+          case 'ArrowUp': {
+            for (let i = 0; i < this.scale; i++) {
+              base.push(i);
+            }
+            offset = this.scale;
+            break;
+          }
+          case 'ArrowLeft': {
+            for (let i = 0; i < this.scale; i++) {
+              base.push(i * this.scale);
+            }
+            offset = 1;
+            break;
+          }
+          case 'ArrowRight': {
+            for (let i = 0; i < this.scale; i++) {
+              base.push(i * this.scale + (this.scale - 1));
+            }
+            offset = -1;
+            break;
+          }
+        }
+
+        for (let i = 0; i < base.length; i++) {
+          for (let j = 0; j < this.scale; j++) {
+            let rank = base[i] + offset * j;
+            let row = Math.floor(rank / this.scale);
+            let col = rank % this.scale;
+            
+            if (this.table[row][col] === null) continue;
+
+            this.table[row][col].merged = false;
+            this.table[row][col].element.style.animation = 'none';
+            
+            let target_row = row;
+            let target_col = col;
+            for (let k = j - 1; k >= 0; k--) {
+              let test_rank = base[i] + offset * k;
+              let test_row = Math.floor(test_rank / this.scale);
+              let test_col = test_rank % this.scale;
+
+              if (this.table[test_row][test_col] === null) {
+                target_row = test_row;
+                target_col = test_col;
+              } else if (!this.table[test_row][test_col].merged
+                        && this.table[test_row][test_col].value === this.table[row][col].value) {
+                target_row = test_row;
+                target_col = test_col;
+                break;
+              } else {
+                break;
+              }
+            }
+
+            if (target_row === row && target_col === col) continue;
+            
+            can_move = true;
+              
+            if (this.table[target_row][target_col] === null) {
+              let value = this.table[row][col].value;
+              this.table[target_row][target_col] = this.createNumBox(target_row, target_col, value);
+            } else {
+              let value = this.table[target_row][target_col].value * 2
+              this.table[target_row][target_col] = this.createNumBox(target_row, target_col, value);
+              this.table[target_row][target_col].merged = true;
+              this.table[target_row][target_col].element.style.animation = 
+              `${this.scale_time / 1000}s ease-in-out ripple`;
+            }
+
+            let left = (this.gap_size + this.box_size) * target_col + this.gap_size;
+            let top = (this.gap_size + this.box_size) * target_row + this.gap_size;
+            this.table[row][col].moveTo(left, top);
+            this.table[row][col] = null;
+          }
+        }
+
+        if (can_move) {
+          this.timeouts.push(setTimeout(function() {
+            this.randomNum();
+            this.refresh();
+            this.timeouts.push(setTimeout(function() {
+              this.done = true;
+            }.bind(this), this.scale_time));
+          }.bind(this), this.slide_time));
+        } else {
+          this.done = true;
+        }
+      },
+
+      randomNum: function() {
+        while (true) {
+          let row = Math.round(Math.random() * (this.table.length - 1));
+          let col = Math.round(Math.random() * (this.table.length - 1));
+
+          if (this.table[row][col] === null) {
+            let value = Math.random() > 0.6 ? 4 : 2;
+            this.table[row][col] = this.createNumBox(row, col, value);
+            break;
+          }
+        }
+      },
+
+      createNumBox: function(row, col, value) {
+        let self = this;
+        let config = {
+          'value': value,
+          'box_size': self.box_size,
+          'left': (self.gap_size + self.box_size) * col + self.gap_size,
+          'top': (self.gap_size + self.box_size) * row + self.gap_size,
+          'bgcolor': self.bgc_map[Math.min(value, 2048)],
+          'font_size': parseInt(self.box_size) / self.font_size_map[Math.min(value.toString().length, 4)],
+          'color': value > 4 ? '#f9f6f2' : '#776e65',
+          'slide_time': this.slide_time,
+        };
+        
+        return new Box(config);
+      },
+
+      refresh: function() {
+        let num_boxes = document.querySelectorAll('.num-box');
+        for (let i = num_boxes.length - 1; i >= 0; i--) {
+          let parent = num_boxes[i].parentNode;
+          parent.removeChild(num_boxes[i]);
+        }
+
+        for (let i = 0; i < this.table.length; i++) {
+          for (let j = 0; j < this.table[i].length; j++) {
+            if (this.table[i][j] !== null) {
+              this.box_container.appendChild(this.table[i][j].element);
+            }
+          }
+        }
+      },
+
+      isGameOver: function() {
+        // TODO
+      },
+    }
+
+    let game_container = document.querySelector('#game-container');
+    let game_2048 = new Game2048({
+      "size": 480,
+      "scale": 4,
+    }, game_container);
+  </script>
+</body>
+
+</html>
